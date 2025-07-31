@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grid Builder</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <header>
+            <h1>Grid Builder</h1>
+            <p>Draw area → Generate 3×3m grid → Build & stack 3×3×3 blocks</p>
+        </header>
+
+        <div class="content">
+            <!-- Map Section -->
+            <div class="map-section">
+                <div class="controls">
+                    <button id="clearBoundary" class="btn">Clear</button>
+                    <button id="generateGrid" class="btn primary" disabled>Generate Grid</button>
+                </div>
+                <div id="map" class="map"></div>
+                <div id="coordinatesDisplay" class="info">
+                    Click to start drawing boundary
+                </div>
+            </div>
+
+            <!-- Builder Section -->
+            <div class="builder-section">
+                <div class="builder-controls">
+                    <div class="color-palette">
+                        <div class="color-option" data-color="#ff4444" style="background: #ff4444"></div>
+                        <div class="color-option" data-color="#44ff44" style="background: #44ff44"></div>
+                        <div class="color-option" data-color="#4444ff" style="background: #4444ff"></div>
+                        <div class="color-option" data-color="#ffff44" style="background: #ffff44"></div>
+                        <div class="color-option" data-color="#ff44ff" style="background: #ff44ff"></div>
+                        <div class="color-option" data-color="#44ffff" style="background: #44ffff"></div>
+                    </div>
+                    <div class="stacking-help">
+                        <small>✨ Hover to highlight • Click grid to place 3×3×3 blocks • Click block top to stack new blocks • Click block sides to build adjacent • Blocks need support to exist • Shift+click to remove • Zoom out returns to starting view</small>
+                    </div>
+                    <div class="camera-controls">
+                        <button id="resetCamera" class="btn" title="Reset camera to center view">🏠 Center</button>
+                        <button id="topView" class="btn" title="Top-down view">⬇️ Top</button>
+                        <button id="zoomToFit" class="btn" title="Zoom to fit all blocks">🔍 Fit</button>
+                    </div>
+                    <button id="togglePhysics" class="btn">Physics: ON</button>
+                    <button id="clearBlocks" class="btn">Clear Blocks</button>
+                    <button id="saveModel" class="btn primary">Save Model</button>
+                </div>
+                <div id="builderCanvas" class="builder-canvas">
+                    <div class="placeholder">Draw boundary to start building</div>
+                </div>
+                <div class="stats">
+                    <span>Blocks: <span id="blockCount">0</span></span>
+                    <span>Grid: <span id="gridSize">0×0</span></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Grid Panel -->
+        <div class="grid-panel" id="gridPanel" style="display: none;">
+            <div class="panel-header">
+                <h3>Grid</h3>
+                <button id="closeGrid" class="btn">×</button>
+            </div>
+            <div id="gridDisplay" class="grid-display"></div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="js/mapManager.js"></script>
+    <script src="js/gridGenerator.js"></script>
+    <script src="js/blockBuilder.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html> 

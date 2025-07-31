@@ -1,0 +1,352 @@
+/* Reset and Base */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f8fafc;
+    color: #334155;
+    line-height: 1.6;
+}
+
+/* Layout */
+.app {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+header {
+    background: white;
+    padding: 1rem 2rem;
+    border-bottom: 1px solid #e2e8f0;
+    text-align: center;
+}
+
+header h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #1e293b;
+    margin-bottom: 0.25rem;
+}
+
+header p {
+    color: #64748b;
+    font-size: 0.9rem;
+}
+
+.content {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    padding: 1rem;
+    min-height: 0;
+}
+
+/* Map Section */
+.map-section {
+    background: white;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.controls {
+    padding: 1rem;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    gap: 0.5rem;
+}
+
+.map {
+    flex: 1;
+    min-height: 400px;
+    position: relative;
+    pointer-events: auto !important;
+    touch-action: auto !important;
+}
+
+.info {
+    padding: 0.75rem 1rem;
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+    font-size: 0.85rem;
+    color: #64748b;
+}
+
+/* Builder Section */
+.builder-section {
+    background: white;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.builder-controls {
+    padding: 1rem;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+/* Color palette */
+.color-palette {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.color-option {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: border-color 0.2s;
+}
+
+.color-option:hover {
+    border-color: rgba(0, 0, 0, 0.3);
+}
+
+.color-option.active {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+/* Stacking help */
+.stacking-help {
+    margin: 8px 0 16px 0;
+    padding: 8px 12px;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: 4px;
+    border-left: 3px solid var(--primary-color);
+}
+
+.stacking-help small {
+    color: #374151;
+    font-size: 12px;
+    line-height: 1.4;
+    display: block;
+}
+
+.camera-controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.camera-controls .btn {
+    padding: 0.4rem 0.8rem;
+    font-size: 0.8rem;
+    min-width: auto;
+    background: #e2e8f0;
+    color: #475569;
+}
+
+.camera-controls .btn:hover {
+    background: #cbd5e1;
+    transform: translateY(-1px);
+}
+
+.builder-canvas {
+    flex: 1;
+    min-height: 400px;
+    position: relative;
+    background: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden; /* Prevent scrollbars */
+}
+
+.placeholder {
+    color: #94a3b8;
+    font-size: 0.9rem;
+}
+
+.stats {
+    padding: 0.75rem 1rem;
+    background: #f8fafc;
+    border-top: 1px solid #e2e8f0;
+    display: flex;
+    gap: 1rem;
+    font-size: 0.85rem;
+    color: #64748b;
+}
+
+/* Buttons */
+.btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid #d1d5db;
+    background: white;
+    color: #374151;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.btn:hover {
+    background: #f9fafb;
+    border-color: #9ca3af;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn.primary {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: white;
+}
+
+.btn.primary:hover:not(:disabled) {
+    background: #2563eb;
+    border-color: #2563eb;
+}
+
+/* Grid Panel */
+.grid-panel {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    width: 350px;
+    max-height: calc(100vh - 40px);
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+    z-index: 1000;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.grid-panel .panel-header {
+    padding: 1rem;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+    display: flex;
+    justify-content: between;
+    align-items: center;
+}
+
+.grid-panel .panel-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1e293b;
+}
+
+.grid-display {
+    padding: 1rem;
+    overflow-y: auto;
+    flex: 1;
+    max-height: calc(100vh - 160px);
+}
+
+.grid-display h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+    color: #1e293b;
+}
+
+.grid-display p {
+    font-size: 0.875rem;
+    color: #64748b;
+    margin-bottom: 0.25rem;
+}
+
+.grid-list {
+    margin-top: 1rem;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.grid-item {
+    padding: 0.5rem;
+    margin-bottom: 0.25rem;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.2s ease;
+}
+
+.grid-item:hover {
+    background: #e2e8f0;
+    border-color: #cbd5e1;
+}
+
+.loading, .error {
+    text-align: center;
+    padding: 2rem;
+    color: #64748b;
+}
+
+.error {
+    color: #dc2626;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+    .content {
+        grid-template-columns: 1fr;
+        gap: 0.5rem;
+    }
+    
+    .grid-panel {
+        width: 90%;
+        left: 5%;
+        right: auto;
+    }
+}
+
+@media (max-width: 768px) {
+    header {
+        padding: 1rem;
+    }
+    
+    .content {
+        padding: 0.5rem;
+    }
+    
+    .controls, .builder-controls {
+        flex-wrap: wrap;
+    }
+    
+    .grid-panel {
+        width: 95%;
+        left: 2.5%;
+        top: 10px;
+        max-height: calc(100vh - 20px);
+    }
+}
+
+/* Canvas optimization */
+canvas {
+    display: block;
+    image-rendering: optimizeSpeed;
+    image-rendering: -moz-crisp-edges;
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: optimize-contrast;
+    -ms-interpolation-mode: nearest-neighbor;
+    touch-action: none; /* Prevent default touch behaviors */
+    user-select: none; /* Prevent text selection */
+    outline: none; /* Remove focus outline */
+} 

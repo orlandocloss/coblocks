@@ -1,0 +1,28 @@
+{
+  "name": "blocks-comap",
+  "version": "1.0.0",
+  "description": "A system for creating LEGO-style neighborhood maps using what3words grid",
+  "main": "index.js",
+  "scripts": {
+    "start": "http-server . -p 8080 -c-1",
+    "dev": "http-server . -p 8080 -c-1 -o",
+    "build": "echo 'Build process for production deployment'"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "three": "^0.158.0",
+    "http-server": "^14.1.1"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1"
+  },
+  "keywords": [
+    "mapping",
+    "what3words",
+    "3d",
+    "blocks",
+    "neighborhood"
+  ],
+  "author": "",
+  "license": "MIT"
+} 
