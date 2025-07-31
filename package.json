@@ -1,12 +1,13 @@
 {
   "name": "blocks-comap",
   "version": "1.0.0",
-  "description": "A system for creating LEGO-style neighborhood maps using what3words grid",
+  "description": "3D neighborhood builder with Minecraft-style physics - Draw boundaries on maps and build with 3×3×3 meter blocks",
   "main": "index.js",
   "scripts": {
     "start": "http-server . -p 8080 -c-1",
     "dev": "http-server . -p 8080 -c-1 -o",
-    "build": "echo 'Build process for production deployment'"
+    "build": "echo 'No build step needed for static site'",
+    "deploy": "git add . && git commit -m 'Deploy updates' && git push origin main"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
@@ -17,12 +18,16 @@
     "http-server": "^14.1.1"
   },
   "keywords": [
-    "mapping",
-    "what3words",
     "3d",
     "blocks",
-    "neighborhood"
+    "minecraft",
+    "neighborhood",
+    "mapping",
+    "threejs",
+    "leaflet",
+    "physics",
+    "builder"
   ],
-  "author": "",
+  "author": "orlandocloss",
   "license": "MIT"
 } 
