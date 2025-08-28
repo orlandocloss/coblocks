@@ -1,117 +1,96 @@
-# 🏘️ Blocks CoMap - 3D Neighborhood Builder
+coblocks
+========
 
-Build 3D neighborhoods using 3×3×3 meter blocks on real-world maps with Minecraft-style physics.
+Interactive boundary-to-grid builder with map overlay and 3D blocks.
 
-## 🚀 Quick Start
+- Draw a boundary on a Leaflet map
+- Generate a 3×3m grid within that outline
+- Build in 3D with blocks using THREE.js (stack, sides, underneath)
+- Toggle a map texture overlay aligned to the boundary
+- Smooth camera modes (rotate, pan, build) and cursor-centered zoom
+- Optimized for huge grids via InstancedMesh; loading has a safe timeout
 
-```bash
+Quick start
+----------
+
+Prereqs: Node.js (for deps) or a simple static server.
+
+1) Install dependencies (optional; libs are CDN-loaded):
+
+```
 npm install
-npm run dev
-# Open http://localhost:8080
 ```
 
-## 📋 User Action Pipeline
+2) Start a static server from the project root (choose one):
 
-### 1. Draw Boundary
-**User Action:** Click points on map to draw boundary  
-**Behind the Scenes:**
-- `MapManager` captures click coordinates (lat/lng)
-- Stores boundary points in polygon array
-- Validates minimum 3 points for completion
-- Calculates boundary area in km²
-
-### 2. Generate Grid  
-**User Action:** Click "Generate Grid"  
-**Behind the Scenes:**
-- `GridGenerator.generateGridPoints()` converts lat/lng boundary to 3×3m grid squares
-- Uses haversine formula for accurate meter-based spacing
-- `isPointInPolygon()` filters grid points inside boundary
-- Creates grid data: `{id, lat, lng, gridX, gridY, blockHeight, color}`
-- Dispatches `gridGenerated` event to 3D builder
-
-### 3. Place Block
-**User Action:** Click on grid square  
-**Behind the Scenes:**
-- `BlockBuilder.addOrStackBlock()` called with grid coordinates
-- `validateBlockPlacement()` checks physics (needs support underneath or adjacent)
-- If valid: creates THREE.js BoxGeometry (1×1×1 unit = 3×3×3 meters)
-- Stores in blocks Map: `{mesh, position, yLevel, color, id}`
-- Updates stats and triggers render
-
-### 4. Stack Block  
-**User Action:** Click top of existing block  
-**Behind the Scenes:**
-- Raycast detects click on block mesh
-- `handleBlockClick()` determines top vs side based on Y coordinate
-- `stackVertically()` finds highest block at X,Z position
-- Creates new block at `yLevel + 1`
-- Physics validation ensures support exists
-
-### 5. Side Placement
-**User Action:** Click side of existing block  
-**Behind the Scenes:**
-- `placeAdjacentBlock()` calculates adjacent position based on click offset
-- Determines direction (N/S/E/W) from relative X,Z coordinates
-- Places block at same Y level as clicked block
-- Physics system validates adjacent support chain
-
-### 6. Remove Block
-**User Action:** Shift+click on block  
-**Behind the Scenes:**
-- `removeBlockByMesh()` removes block from scene and data
-- `removeUnsupportedBlocks()` cascades through all blocks
-- `hasSupport()` recursively checks each block's support chain
-- Unsupported blocks removed automatically (gravity effect)
-
-### 7. Physics Validation
-**Behind the Scenes (Always Active):**
-- Ground level blocks on original grid always supported
-- `hasIndirectSupport()` recursively traces support chains
-- Adjacent blocks can support each other horizontally
-- `getAdjacentPositions()` checks N/S/E/W neighbors
-- Circular reference prevention with visited set
-
-## 🏗️ Architecture
-
+- Python
 ```
-├── js/
-│   ├── mapManager.js      # Leaflet map, boundary drawing
-│   ├── gridGenerator.js   # Lat/lng to 3D grid conversion  
-│   ├── blockBuilder.js    # THREE.js 3D rendering & physics
-│   └── app.js            # Event coordination
-├── index.html            # UI layout
-└── styles.css           # Styling
+python3 -m http.server 8080
+```
+- Node (serve)
+```
+npx serve -l 8080
 ```
 
-## 🎮 Controls
+3) Open in a browser:
+```
+http://127.0.0.1:8080
+```
 
-- **Left Click**: Place block / Stack / Build adjacent
-- **Shift+Click**: Remove block (triggers physics cascade)  
-- **Mouse Wheel**: Zoom (zoom out returns to starting view)
-- **Mouse Drag**: Pan camera
-- **Physics Button**: Toggle support requirements on/off
+How to use
+----------
 
-## 🔧 Key Classes
+1) Map stage
+- Draw your boundary by clicking on the map
+- Click the generate button (UI handles transition)
 
-**MapManager**: Handles Leaflet map interactions and boundary polygon  
-**GridGenerator**: Converts geographic boundaries to 3D grid coordinates  
-**BlockBuilder**: THREE.js scene management, block physics, and rendering  
+2) Loading stage
+- A single progress bar shows generation
+- Very large selections will auto-timeout (~15s) and ask to restart
 
-## 📐 Coordinate System
+3) Builder stage
+- Camera mode buttons:
+  - Rotate: orbit around the grid (cursor: all-scroll; drag: move)
+  - Pan: drag to move horizontally (cursor: move)
+  - Build: place/remove blocks (cursor: crosshair)
+- Map toggle: show/hide overlay texture aligned to your boundary
+- Color picker: pops up in build mode for block colors
+- Zoom: wheel zoom centers on the cursor; zooming out recenters to the initial overview
 
-- **Real World**: 1 grid square = 3×3 meters
-- **3D World**: 1 unit = 3 meters (so 1×1×1 block = 3×3×3m)
-- **Grid Coordinates**: Integer X,Z positions
-- **Y Levels**: Integer heights (0 = ground, 1 = first level up, etc.)
+Controls (mouse)
+----------------
+- Left drag (Rotate mode): orbit view
+- Left drag (Pan mode): move view horizontally
+- Left click (Build mode): place on top/sides/below based on clicked face
+- Wheel: zoom to cursor; far zoom returns toward the starting view
 
-## 🧱 Physics Rules
+Performance
+-----------
+- Grid rendering uses THREE.InstancedMesh for high performance
+- Designed to handle very large grids; ultimately limited by browser/GPU memory
+- Loading uses cooperative chunking and a timeout, so the UI stays responsive
 
-1. **Ground Rule**: Blocks on original grid (Y=0) always supported
-2. **Vertical Rule**: Blocks directly underneath provide support  
-3. **Adjacent Rule**: Horizontal neighbors can provide support
-4. **Chain Rule**: Support chains through connected blocks
-5. **Cascade Rule**: Remove support → dependent blocks fall automatically
+Tech stack
+----------
+- Leaflet.js (map, boundary drawing)
+- THREE.js (3D scene, blocks, grid, textures)
+- html2canvas (map capture when needed)
+- Vanilla JS, no frameworks
 
----
+Project structure
+-----------------
+- `index.html` — stages, controls, scripts
+- `styles.css` — UI, loading bar, controls
+- `js/mapManager.js` — Leaflet map, boundary capture
+- `js/gridGenerator.js` — boundary → grid generation (cooperative, chunked)
+- `js/blockBuilder.js` — THREE.js scene, blocks, overlay, camera, input
+- `js/app.js` — stage management, loading bar, global events
 
-**Built with Leaflet.js, THREE.js, and vanilla JavaScript** 
+Notes
+-----
+- If you select an extremely large area and generation fails or times out, you’ll see an alert asking to restart and try a smaller area.
+- Favicon is `favicon.svg`. Page title is lowercase: "coblocks".
+
+License
+-------
+MIT (or your preferred license). 

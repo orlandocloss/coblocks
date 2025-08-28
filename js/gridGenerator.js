@@ -23,6 +23,7 @@ class GridGenerator {
     init() {
         // Listen for grid generation requests
         window.addEventListener('generateGrid', (event) => {
+            console.log('GridGenerator: Received generateGrid event');
             this.generateGrid(event.detail.bounds, event.detail.boundary);
         });
 
@@ -34,31 +35,82 @@ class GridGenerator {
 
     async generateGrid(bounds, boundary) {
         try {
-            this.showLoadingState();
-
-            // Generate grid points within the boundary
-            const gridPoints = this.generateGridPoints(bounds, boundary);
+            console.log('🏗️ Starting grid generation...');
+            console.log('📍 Bounds:', bounds);
+            console.log('🔲 Boundary points:', boundary.length);
             
-            // Generate grid data instantly
-            const gridData = this.generateGridData(gridPoints);
-            console.log(`Generated ${gridData.length} grid squares instantly!`);
+            // Reset/clear any previous abort request
+            window.__abortGeneration = false;
+            
+            // Log area calculation
+            const north = bounds.getNorth();
+            const south = bounds.getSouth();
+            const east = bounds.getEast();
+            const west = bounds.getWest();
+            const latRange = north - south;
+            const lngRange = east - west;
+            const avgLat = (north + south) / 2;
+            
+            const latRangeMeters = latRange * 111000;
+            const lngRangeMeters = lngRange * 111000 * Math.cos(avgLat * Math.PI / 180);
+            const areaKmSq = (latRangeMeters * lngRangeMeters) / 1000000;
+            
+            console.log(`📐 Area: ${areaKmSq.toFixed(3)} km² (${latRangeMeters.toFixed(0)}m × ${lngRangeMeters.toFixed(0)}m)`);
+            
+            // Estimate grid size before generation
+            const latSpacing = 3 / 111000;
+            const lngSpacing = 3 / (111000 * Math.cos(avgLat * Math.PI / 180));
+            const estimatedRows = Math.ceil(latRange / latSpacing);
+            const estimatedCols = Math.ceil(lngRange / lngSpacing);
+            const estimatedSquares = estimatedRows * estimatedCols;
+            
+            console.log(`🔢 Estimated grid: ${estimatedRows} × ${estimatedCols} = ${estimatedSquares.toLocaleString()} squares`);
+            
+            // Memory estimation
+            const estimatedMemoryMB = (estimatedSquares * 100) / 1024 / 1024; // Rough estimate
+            console.log(`💾 Estimated memory: ~${estimatedMemoryMB.toFixed(1)} MB`);
+            
+            const startTime = performance.now();
+            
+            // Generate grid points within the boundary (cooperative)
+            console.log('⚡ Generating grid points...');
+            const gridPoints = await this.generateGridPointsAsync(bounds, boundary);
+            const pointsTime = performance.now();
+            console.log(`✅ Generated ${gridPoints.length} grid points in ${(pointsTime - startTime).toFixed(0)}ms`);
+            
+            if (gridPoints.length === 0) {
+                console.warn('⚠️ No grid points generated - boundary might be too small or invalid');
+                this.showError('No grid points generated. Please try drawing a larger boundary.');
+                return;
+            }
+            
+            // Generate grid data (cooperative)
+            console.log('🔄 Processing grid data...');
+            const gridData = await this.generateGridDataAsync(gridPoints);
+            const endTime = performance.now();
+            console.log(`✅ Generated ${gridData.length} grid squares in ${(endTime - pointsTime).toFixed(0)}ms`);
+            console.log(`🎯 Total generation time: ${(endTime - startTime).toFixed(0)}ms`);
+            
+            // If aborted during processing, stop silently (timeout will alert)
+            if (window.__abortGeneration) {
+                console.warn('⛔ Generation aborted by timeout');
+                return;
+            }
             
             this.gridData = gridData;
             this.updateGridSize();
-            
-            // Display the grid
-            this.displayGrid(gridData);
-            
-            // Show the grid panel
-            this.showGridPanel();
 
-            // Dispatch event for the block builder
+            // Dispatch event for the block builder - this will trigger stage transition
+            console.log('GridGenerator: Dispatching gridGenerated event with', gridData.length, 'grid points');
             window.dispatchEvent(new CustomEvent('gridGenerated', {
                 detail: {
                     gridData: gridData,
-                    gridSize: this.gridSize
+                    gridSize: this.gridSize,
+                    bounds: bounds,
+                    boundary: boundary
                 }
             }));
+            console.log('GridGenerator: Event dispatched successfully');
 
         } catch (error) {
             console.error('Error generating grid:', error);
@@ -66,82 +118,62 @@ class GridGenerator {
         }
     }
 
-    /**
-     * Generates 3×3m grid points within the given boundary
-     * @param {L.LatLngBounds} bounds - Geographic bounds
-     * @param {Array} boundary - Array of lat/lng points defining boundary
-     * @returns {Array} Array of grid points with coordinates
-     */
-    generateGridPoints(bounds, boundary) {
+    // Cooperative (yielding) grid point generation to avoid blocking the main thread
+    async generateGridPointsAsync(bounds, boundary) {
         const points = [];
-        
         const north = bounds.getNorth();
         const south = bounds.getSouth();
         const east = bounds.getEast();
         const west = bounds.getWest();
-        
-        console.log(`Boundary: N=${north.toFixed(6)}, S=${south.toFixed(6)}, E=${east.toFixed(6)}, W=${west.toFixed(6)}`);
-        
-        // Calculate the actual area
-        const latRange = north - south;
-        const lngRange = east - west;
         const avgLat = (north + south) / 2;
-        
-        // Convert to meters for accurate calculation
-        const latRangeMeters = latRange * 111000;
-        const lngRangeMeters = lngRange * 111000 * Math.cos(avgLat * Math.PI / 180);
-        const areaKmSq = (latRangeMeters * lngRangeMeters) / 1000000;
-        
-        console.log(`Area: ${latRangeMeters.toFixed(0)}m x ${lngRangeMeters.toFixed(0)}m = ${areaKmSq.toFixed(3)} km²`);
-        
-        // 3x3 meter grid spacing
+
         const latSpacing = 3 / 111000;
         const lngSpacing = 3 / (111000 * Math.cos(avgLat * Math.PI / 180));
-        
-        const estimatedRows = Math.ceil(latRange / latSpacing);
-        const estimatedCols = Math.ceil(lngRange / lngSpacing);
-        const estimatedSquares = estimatedRows * estimatedCols;
-        
-        console.log(`Grid: ${estimatedRows} rows x ${estimatedCols} cols = ${estimatedSquares} squares`);
-        
-        // Warn if too many squares
-        if (estimatedSquares > 5000) {
-            const proceed = confirm(
-                `This will generate ${estimatedSquares.toLocaleString()} squares (3×3m each).\n\n` +
-                `Area: ${areaKmSq.toFixed(3)} km²\n\n` +
-                `Continue?`
-            );
-            
-            if (!proceed) {
-                throw new Error('Grid generation cancelled');
-            }
-        }
 
-        // Generate grid points - north to south, west to east for proper orientation
         let row = 0;
-        
+        let rowsSinceYield = 0;
         for (let lat = north; lat >= south; lat -= latSpacing) {
             let col = 0;
-            
             for (let lng = west; lng <= east; lng += lngSpacing) {
-                // Check if point is within boundary
                 if (this.isPointInPolygon([lat, lng], boundary)) {
-                    points.push({
-                        lat: lat,
-                        lng: lng,
-                        row: row,
-                        col: col,
-                        gridX: col,
-                        gridY: row
-                    });
+                    points.push({ lat, lng, row, col, gridX: col, gridY: row });
                 }
                 col++;
             }
             row++;
+
+            // Cooperatively yield to the event loop every ~50 rows
+            rowsSinceYield++;
+            if (rowsSinceYield >= 50) {
+                rowsSinceYield = 0;
+                if (window.__abortGeneration) {
+                    break;
+                }
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
         }
-        
-        console.log(`Generated ${points.length} grid points within boundary`);
         return points;
+    }
+
+    // Cooperative grid data construction
+    async generateGridDataAsync(gridPoints) {
+        const result = new Array(gridPoints.length);
+        const chunkSize = 20000;
+        for (let i = 0; i < gridPoints.length; i += chunkSize) {
+            if (window.__abortGeneration) break;
+            const chunk = gridPoints.slice(i, i + chunkSize);
+            for (let j = 0; j < chunk.length; j++) {
+                const point = chunk[j];
+                result[i + j] = {
+                    ...point,
+                    id: `grid_${point.row}_${point.col}`,
+                    blockHeight: 0,
+                    blockColor: '#ffffff'
+                };
+            }
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        return window.__abortGeneration ? [] : result;
     }
 
     isPointInPolygon(point, polygon) {
@@ -172,18 +204,36 @@ class GridGenerator {
     }
 
     updateGridSize() {
-        if (this.gridData.length === 0) {
-            this.gridSize = { width: 0, height: 0 };
-            return;
-        }
+        try {
+            if (this.gridData.length === 0) {
+                this.gridSize = { width: 0, height: 0 };
+                return;
+            }
 
-        const maxRow = Math.max(...this.gridData.map(item => item.row));
-        const maxCol = Math.max(...this.gridData.map(item => item.col));
-        
-        this.gridSize = {
-            width: maxCol + 1,
-            height: maxRow + 1
-        };
+            // Process in chunks to avoid "too many function arguments" error
+            let maxRow = -1, maxCol = -1;
+            const chunkSize = 10000;
+            
+            for (let i = 0; i < this.gridData.length; i += chunkSize) {
+                const chunk = this.gridData.slice(i, i + chunkSize);
+                const chunkMaxRow = Math.max(...chunk.map(item => item.row));
+                const chunkMaxCol = Math.max(...chunk.map(item => item.col));
+                if (chunkMaxRow > maxRow) maxRow = chunkMaxRow;
+                if (chunkMaxCol > maxCol) maxCol = chunkMaxCol;
+            }
+            
+            this.gridSize = {
+                width: maxCol + 1,
+                height: maxRow + 1
+            };
+        } catch (error) {
+            console.error('Error in updateGridSize:', error);
+            // Fallback calculation
+            this.gridSize = {
+                width: Math.ceil(Math.sqrt(this.gridData.length)),
+                height: Math.ceil(Math.sqrt(this.gridData.length))
+            };
+        }
 
         const gridSizeElement = document.getElementById('gridSize');
         if (gridSizeElement) {
@@ -193,6 +243,12 @@ class GridGenerator {
 
     displayGrid(gridData) {
         const gridDisplay = document.getElementById('gridDisplay');
+        if (!gridDisplay) {
+            // In stage-based layout, we don't need the old grid panel
+            console.log('DisplayGrid: Grid panel not available in stage-based layout');
+            return;
+        }
+        
         gridDisplay.innerHTML = '';
 
         if (gridData.length === 0) {
@@ -268,17 +324,23 @@ class GridGenerator {
 
     showGridPanel() {
         const panel = document.getElementById('gridPanel');
-        panel.style.display = 'block';
-        
-        // Ensure map remains interactive
-        if (window.mapManager?.ensureMapInteraction) {
-            setTimeout(() => window.mapManager.ensureMapInteraction(), 100);
+        if (panel) {
+            panel.style.display = 'block';
+            
+            // Ensure map remains interactive
+            if (window.mapManager?.ensureMapInteraction) {
+                setTimeout(() => window.mapManager.ensureMapInteraction(), 100);
+            }
         }
+        // In stage-based layout, grid display is handled by stage transitions
     }
 
     hideGridPanel() {
         const panel = document.getElementById('gridPanel');
-        panel.style.display = 'none';
+        if (panel) {
+            panel.style.display = 'none';
+        }
+        // In stage-based layout, this method is not needed
         
         if (window.mapManager) {
             window.mapManager.clearGridMarkers();
@@ -287,20 +349,28 @@ class GridGenerator {
 
     showLoadingState() {
         const gridDisplay = document.getElementById('gridDisplay');
-        gridDisplay.innerHTML = `
-            <div class="loading">
-                <p>Generating grid...</p>
-            </div>
-        `;
+        if (gridDisplay) {
+            gridDisplay.innerHTML = `
+                <div class="loading">
+                    <p>Generating grid...</p>
+                </div>
+            `;
+        }
+        // In stage-based layout, loading is handled by the main app
     }
 
     showError(message) {
         const gridDisplay = document.getElementById('gridDisplay');
-        gridDisplay.innerHTML = `
-            <div class="error">
-                <p>Error: ${message}</p>
-            </div>
-        `;
+        if (gridDisplay) {
+            gridDisplay.innerHTML = `
+                <div class="error">
+                    <p>Error: ${message}</p>
+                </div>
+            `;
+        } else {
+            // In stage-based layout, show error in console
+            console.error('GridGenerator Error:', message);
+        }
     }
 
     getGridData() {

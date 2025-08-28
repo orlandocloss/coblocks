@@ -34,21 +34,19 @@ class MapManager {
             zoomDelta: 1
         }).setView([51.505, -0.09], 13);
 
-        // Add OpenStreetMap tiles
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© OpenStreetMap contributors',
+        // Add CORS-enabled tiles for capture-friendly rendering
+        this.tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap contributors, © CARTO',
             maxZoom: 19,
             tileSize: 256,
-            zoomOffset: 0
+            zoomOffset: 0,
+            crossOrigin: 'anonymous'
         }).addTo(this.map);
 
         // Set up event listeners
         this.setupEventListeners();
 
-        // Update coordinates display on map movement
-        this.map.on('mousemove', (e) => {
-            this.updateCoordinatesDisplay(e.latlng);
-        });
+        // Map ready for clean UI
 
         // Force map to invalidate size after initialization
         setTimeout(() => {
@@ -82,15 +80,10 @@ class MapManager {
         document.getElementById('clearBoundary').addEventListener('click', () => {
             this.clearBoundary();
         });
-
-        document.getElementById('generateGrid').addEventListener('click', () => {
-            this.generateGrid();
-        });
     }
 
     startDrawing() {
         this.isDrawing = true;
-        this.updateCoordinatesDisplay(null, "Drawing boundary... Double-click to complete");
         
         // Change cursor to indicate drawing mode
         this.map.getContainer().style.cursor = 'crosshair';
@@ -123,12 +116,11 @@ class MapManager {
             this.markers.push(line);
         }
         
-        this.updateCoordinatesDisplay(latlng, `Point ${this.boundaryPoints.length} added. Double-click to complete.`);
+        // Point added to boundary
     }
 
     completeBoundary() {
         if (this.boundaryPoints.length < 3) {
-            alert('Need at least 3 points to create a boundary');
             return;
         }
 
@@ -136,27 +128,138 @@ class MapManager {
         
         // Create the final polygon
         this.drawnBoundary = L.polygon(this.boundaryPoints, {
-            color: '#3b82f6',
-            fillColor: '#3b82f6',
-            fillOpacity: 0.2,
-            weight: 2
+            color: '#667eea',
+            fillColor: '#667eea',
+            fillOpacity: 0.3,
+            weight: 3
         });
         this.drawnBoundary.addTo(this.map);
-        
-        // Calculate area
-        const area = this.calculatePolygonArea();
         
         // Reset cursor
         this.map.getContainer().style.cursor = '';
         
-        // Enable generate button
-        document.getElementById('generateGrid').disabled = false;
-        
-        // Update display
-        this.updateCoordinatesDisplay(null, `Boundary completed! Area: ~${area.toFixed(3)} km²`);
-        
         // Fit map to boundary
-        this.map.fitBounds(this.drawnBoundary.getBounds(), { padding: [10, 10] });
+        this.map.fitBounds(this.drawnBoundary.getBounds(), { padding: [20, 20] });
+        
+        // Capture the map texture before transitioning stages
+        setTimeout(() => {
+            this.captureMapTexture();
+        }, 500); // Wait for map to settle after fitBounds
+        
+        // Dispatch event to transition to loading stage
+        window.dispatchEvent(new CustomEvent('boundaryCompleted'));
+        
+        // Auto-generate grid after a brief delay
+        setTimeout(() => {
+            console.log('MapManager: Auto-generating grid...');
+            this.generateGrid();
+        }, 1000);
+    }
+
+    /**
+     * Capture the current map view as a texture for the 3D overlay
+     */
+    async captureMapTexture() {
+        try {
+            console.log('🗺️ Capturing map texture...');
+            
+            const mapElement = document.getElementById('map');
+            if (!mapElement) {
+                console.error('❌ Map element not found for capture');
+                return;
+            }
+
+            // Ensure visible tiles for the current view are loaded
+            await this.waitForVisibleTiles();
+
+            // Temporarily hide boundary polygon and markers to avoid drawing twice
+            const hiddenLayers = { polygon: null, markers: [] };
+            if (this.drawnBoundary && this.map.hasLayer(this.drawnBoundary)) {
+                hiddenLayers.polygon = this.drawnBoundary;
+                this.map.removeLayer(this.drawnBoundary);
+            }
+            if (this.markers && this.markers.length > 0) {
+                this.markers.forEach(layer => {
+                    if (this.map.hasLayer(layer)) {
+                        hiddenLayers.markers.push(layer);
+                        this.map.removeLayer(layer);
+                    }
+                });
+            }
+
+            if (typeof html2canvas !== 'undefined') {
+                const rect = mapElement.getBoundingClientRect();
+                const width = Math.round(rect.width);
+                const height = Math.round(rect.height);
+                const canvas = await html2canvas(mapElement, {
+                    useCORS: true,
+                    allowTaint: false,
+                    width: width,
+                    height: height,
+                    scale: 1
+                });
+
+                // Do not draw boundary on the captured canvas; boundary is shown as a 3D line overlay
+
+                // Store the captured canvas for later use
+                this.capturedMapCanvas = canvas;
+                console.log('✅ Map texture captured successfully');
+                
+                // Compute the geographic bounds of the captured canvas
+                const tl = this.map.containerPointToLatLng([0, 0]);
+                const br = this.map.containerPointToLatLng([width, height]);
+                const captureBounds = {
+                    north: Math.max(tl.lat, br.lat),
+                    south: Math.min(tl.lat, br.lat),
+                    west: Math.min(tl.lng, br.lng),
+                    east: Math.max(tl.lng, br.lng)
+                };
+                
+                // Dispatch event with the captured texture and capture bounds
+                window.dispatchEvent(new CustomEvent('mapTextureCaptured', {
+                    detail: { canvas: canvas, bounds: captureBounds }
+                }));
+                
+            } else {
+                console.warn('⚠️ html2canvas not available for map capture');
+            }
+            
+            // Restore hidden boundary layers
+            if (hiddenLayers.polygon) {
+                hiddenLayers.polygon.addTo(this.map);
+            }
+            if (hiddenLayers.markers.length > 0) {
+                hiddenLayers.markers.forEach(layer => layer.addTo(this.map));
+            }
+            
+        } catch (error) {
+            console.error('❌ Error capturing map texture:', error);
+        }
+    }
+
+    /**
+     * Wait for the current view's tiles to finish loading
+     */
+    waitForVisibleTiles() {
+        return new Promise((resolve) => {
+            // If no tile layer reference, resolve immediately
+            if (!this.tileLayer) {
+                resolve();
+                return;
+            }
+            let timeoutId = null;
+            const onLoad = () => {
+                if (timeoutId) clearTimeout(timeoutId);
+                this.tileLayer.off('load', onLoad);
+                resolve();
+            };
+            this.tileLayer.on('load', onLoad);
+            // Safety timeout in case the event doesn't fire
+            timeoutId = setTimeout(() => {
+                this.tileLayer.off('load', onLoad);
+                resolve();
+            }, 1500);
+        });
     }
 
     clearBoundary() {
@@ -179,7 +282,7 @@ class MapManager {
         document.getElementById('generateGrid').disabled = true;
         
         // Update display
-        this.updateCoordinatesDisplay(null, 'Click to start drawing boundary');
+        // Ready for boundary drawing
 
         // Close grid panel if open
         if (window.gridGenerator) {
@@ -189,17 +292,19 @@ class MapManager {
 
     generateGrid() {
         if (!this.drawnBoundary || this.boundaryPoints.length === 0) {
-            alert('Please draw a boundary first');
+            console.warn('No boundary drawn; cannot generate grid.');
             return;
         }
 
         // Dispatch event for grid generation
+        console.log('MapManager: Dispatching generateGrid event');
         window.dispatchEvent(new CustomEvent('generateGrid', {
             detail: {
                 bounds: this.drawnBoundary.getBounds(),
                 boundary: this.boundaryPoints
             }
         }));
+        console.log('MapManager: generateGrid event dispatched');
     }
 
     calculatePolygonArea() {
@@ -221,16 +326,7 @@ class MapManager {
         return area * kmPerDegree * kmPerDegree;
     }
 
-    updateCoordinatesDisplay(latlng, message) {
-        const display = document.getElementById('coordinatesDisplay');
-        if (!display) return;
-        
-        if (message) {
-            display.textContent = message;
-        } else if (latlng) {
-            display.textContent = `Lat: ${latlng.lat.toFixed(6)}, Lng: ${latlng.lng.toFixed(6)}`;
-        }
-    }
+    // Coordinate display removed for clean UI
 
     // Grid highlighting methods
     clearGridMarkers() {
