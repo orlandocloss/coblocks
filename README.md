@@ -85,12 +85,5 @@ Project structure
 - `js/gridGenerator.js` — boundary → grid generation (cooperative, chunked)
 - `js/blockBuilder.js` — THREE.js scene, blocks, overlay, camera, input
 - `js/app.js` — stage management, loading bar, global events
-
-Notes
------
-- If you select an extremely large area and generation fails or times out, you’ll see an alert asking to restart and try a smaller area.
-- Favicon is `favicon.svg`. Page title is lowercase: "coblocks".
-
-License
 -------
 MIT (or your preferred license). 
