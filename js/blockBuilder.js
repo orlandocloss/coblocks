@@ -78,6 +78,29 @@ class BlockBuilder {
         this.panSpeed = 0.001;
         this.initialCameraState = null; // Store starting camera position and target
         
+        // Water system (cosy island vibes)
+        this.waterInstanced = null;                 // Instanced water tiles
+        this.waterTiles = [];                       // [{ x, z } per tile]
+        this.waterParams = {                        // Tunable wave params
+            amplitude: 4,                        // Larger wave height
+            baseHeight: 0.03,                       // Taller columns
+            speed: 1.5,                             // Wave speed
+            phaseStep: 0.7,                        // Phase per Chebyshev ring step
+            waterDepth: 2                      // Vertical offset below land surface so crests meet skirt base
+        };
+        this.islandCenter = new THREE.Vector3(0, 0, 0);
+        this._waveTimeStart = performance.now();
+        this.landBaseY = 0.5;                       // Raise land above water
+        this.skirtTiles = new Set();                // Keys of skirt positions to exclude from water
+        this.backgroundDome = null;                 // Large gradient dome
+        this.waterOuterCells = 72;                 // Max offset for water extent (in grid cells)
+        
+        // Camera state
+        this.camera = null;
+        this.cameraTarget = new THREE.Vector3(0, 0, 0);
+        this.gridCenter = new THREE.Vector3(0, 0, 0);
+        this.cameraMode = 'rotate';                 // 'rotate' | 'pan' | 'build'
+        
         this.init();
     }
 
@@ -301,35 +324,21 @@ class BlockBuilder {
         console.log('📷 Setting camera position...');
         this.setCameraPosition();
         
-        // Create or update the precise boundary overlay on the grid
-        this.createBoundaryLine();
+        // Skip drawing the boundary line overlay (no blue boundary)
+        // this.createBoundaryLine();
         
         // Auto-show map overlay by default
-        setTimeout(() => {
-            this.showMapOverlay();
-            const button = document.getElementById('toggleMapOverlay');
-            if (button) {
-                button.classList.add('active');
-            }
-        }, 500);
+        this.mapOverlayVisible = true;
+        this.showMapOverlay();
         
-        // Update camera controls now that we have grid size
-        if (this.controls && this.gridCenter) {
-            this.controls.target.copy(this.gridCenter);
-            // Update max distance to match center button
-            this.controls.maxDistance = Math.max(this.gridSize.width, this.gridSize.height) * 1.2;
-            this.controls.update();
-            // Enforce boundaries now that we have grid size
-            this.enforceBoundariesWithUpdate();
-        } else if (!this.controls && this.currentTarget) {
-            // For basic controls, update the target
-            this.currentTarget.copy(this.gridCenter);
-        }
+        // Update cursor style based on mode
+        this.updateCursorStyle();
         
-        this.updateStats();
+        const endTime = performance.now();
+        console.log(`🏁 BlockBuilder: Grid setup completed in ${(endTime - startTime).toFixed(0)}ms`);
+        
+        // Ensure a render after setup
         this.needsRender = true;
-        
-        console.log('BlockBuilder: Grid setup complete, 3D scene ready');
         
         // Hide placeholder
         const placeholder = document.querySelector('.placeholder');
@@ -436,6 +445,7 @@ class BlockBuilder {
         });
         this.renderer.setSize(containerRect.width, containerRect.height);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.setClearColor(0xe8f4f8, 1); // Light turquoise background
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         container.appendChild(this.renderer.domElement);
@@ -1238,9 +1248,14 @@ class BlockBuilder {
     }
 
     setupLighting() {
-        // Ambient light
-        const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
+        // Ambient light for base illumination
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
         this.scene.add(ambientLight);
+
+        // Hemisphere light for cosy sky-ground ambience
+        const hemiLight = new THREE.HemisphereLight(0xcfe8ff, 0xd8f2e0, 0.65);
+        hemiLight.position.set(0, 60, 0);
+        this.scene.add(hemiLight);
 
         // Directional light with shadows
         const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
@@ -1271,14 +1286,35 @@ class BlockBuilder {
             this.instancedGridMesh.material?.dispose?.();
             this.instancedGridMesh = null;
         }
-
+        // Remove existing water field (it depends on grid bounds)
+        if (this.waterInstances) {
+            this.waterInstances.forEach(inst => {
+                this.scene.remove(inst);
+                inst.geometry?.dispose?.();
+                inst.material?.dispose?.();
+            });
+            this.waterInstances = [];
+            this.waterTiles = [];
+        }
+        // Remove existing terrain skirt
+        if (this.terrainGroup) {
+            this.scene.remove(this.terrainGroup);
+            this.terrainGroup.traverse(obj => {
+                if (obj.isMesh) {
+                    obj.geometry?.dispose?.();
+                    obj.material?.dispose?.();
+                }
+            });
+            this.terrainGroup = null;
+        }
+        
         // Prepare fast index
         this.gridCellIndex.clear();
         this.instanceIdToGridPoint = [];
         this.gridData.forEach(gp => {
             this.gridCellIndex.set(`${gp.gridX}_${gp.gridY}`, gp);
         });
-
+        
         // Create a single instanced mesh for all grid squares
         const geometry = new THREE.PlaneGeometry(this.blockSize, this.blockSize);
         const material = new THREE.MeshBasicMaterial({
@@ -1291,7 +1327,7 @@ class BlockBuilder {
         material.polygonOffset = true;
         material.polygonOffsetFactor = -1;
         material.polygonOffsetUnits = -1;
-
+        
         const count = this.gridData.length;
         let instanced;
         try {
@@ -1301,14 +1337,14 @@ class BlockBuilder {
             alert('This selection is too large for the map to handle right now and caused an error. Please restart and try a smaller area.');
             return;
         }
-
+        
         const tempMatrix = new THREE.Matrix4();
         const rotation = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
         for (let i = 0; i < count; i++) {
             const gp = this.gridData[i];
             tempMatrix.identity();
             tempMatrix.multiply(rotation);
-            tempMatrix.setPosition(gp.gridX, 0, gp.gridY);
+            tempMatrix.setPosition(gp.gridX, this.landBaseY, gp.gridY);
             instanced.setMatrixAt(i, tempMatrix);
             this.instanceIdToGridPoint[i] = gp;
         }
@@ -1316,20 +1352,56 @@ class BlockBuilder {
         instanced.renderOrder = 2; // draw after map overlay
         this.instancedGridMesh = instanced;
         this.scene.add(this.instancedGridMesh);
-
+        
+        // Compute island center from grid bounds
+        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+        for (let i = 0; i < this.gridData.length; i++) {
+            const gp = this.gridData[i];
+            if (gp.gridX < minX) minX = gp.gridX;
+            if (gp.gridX > maxX) maxX = gp.gridX;
+            if (gp.gridY < minZ) minZ = gp.gridY;
+            if (gp.gridY > maxZ) maxZ = gp.gridY;
+        }
+        const centerX = (minX + maxX) / 2;
+        const centerZ = (minZ + maxZ) / 2;
+        this.islandCenter.set(centerX, 0, centerZ);
+        
+        // Align ground picking plane to raised land level
+        if (this.groundPlane) this.groundPlane.constant = -this.landBaseY;
+        
+        // Cosy fog tuned to grid size (lighter)
+        const sizeHint = Math.max(20, Math.max(maxX - minX, maxZ - minZ));
+        const fogNear = sizeHint * 1.3;
+        const fogFar = sizeHint * 3.6;
+        this.scene.fog = new THREE.Fog(0xe8f4f8, fogNear, fogFar); // Match new background
+        
+        // Add a boundary-shaped terrain skirt (3 rings) to make the grid feel like an island
+        this.createIslandSkirt({ rings: 3 });
+        
+        // Build a blocky water field around the grid (cosy island vibe), excluding skirt tiles
+        this.createWaterField({
+            minX: Math.floor(minX - 120),
+            maxX: Math.ceil(maxX + 120),
+            minZ: Math.floor(minZ - 120),
+            maxZ: Math.ceil(maxZ + 120)
+        }, this.skirtTiles, this.waterOuterCells);
+        
+        // Create large gradient background dome
+        this.createBackgroundDome();
+        
         // Create a reusable hover indicator if needed
         if (!this.hoverIndicator) {
             const hoverGeom = new THREE.EdgesGeometry(new THREE.PlaneGeometry(this.blockSize, this.blockSize));
             const hoverMat = new THREE.LineBasicMaterial({ color: 0x4444ff, transparent: true, opacity: 0.8 });
             const hover = new THREE.LineSegments(hoverGeom, hoverMat);
             hover.rotation.x = -Math.PI / 2;
-            hover.position.set(0, 0.002, 0);
+            hover.position.set(0, this.landBaseY + 0.002, 0);
             hover.visible = false;
             hover.renderOrder = 3;
             this.hoverIndicator = hover;
             this.scene.add(this.hoverIndicator);
         }
-
+        
         this.needsRender = true;
     }
 
@@ -1357,7 +1429,7 @@ class BlockBuilder {
                 const gp = this.gridCellIndex.get(key);
                 if (gp && this.hoverIndicator) {
                     this.hoverIndicator.visible = true;
-                    this.hoverIndicator.position.set(gx, 0.002, gz);
+                    this.hoverIndicator.position.set(gx, this.landBaseY + 0.002, gz);
                     this.hoveredObject = this.hoverIndicator;
                     this.needsRender = true;
                     return;
@@ -1588,7 +1660,7 @@ class BlockBuilder {
         });
         
         const errorBlock = new THREE.Mesh(geometry, material);
-        const yPosition = yLevel * this.blockSize + this.blockSize / 2;
+        const yPosition = this._calculateYPosition(x, z, yLevel, this.blockSize);
         errorBlock.position.set(x, yPosition, z);
         
         this.scene.add(errorBlock);
@@ -1644,11 +1716,18 @@ class BlockBuilder {
         }
 
         // Create new 3x3x3 block (1 unit = 3 meters in real world)
-        const geometry = new THREE.BoxGeometry(this.blockSize, this.blockSize, this.blockSize);
+        // Special case: first block at ground level in empty column is thin
+        const isEmptyColumn = !Array.from(this.blocks.values()).some(bd => 
+            bd.position.x === x && bd.position.z === z
+        );
+        const height = (yLevel === 0 && isEmptyColumn) ? 0.22 : this.blockSize;
+        
+        const geometry = new THREE.BoxGeometry(this.blockSize, height, this.blockSize);
         const material = new THREE.MeshLambertMaterial({ color: this.selectedColor });
         
         const block = new THREE.Mesh(geometry, material);
-        const yPosition = yLevel * this.blockSize + this.blockSize / 2; // Stack blocks properly
+        // Calculate Y position based on actual cumulative height of blocks below
+        const yPosition = this._calculateYPosition(x, z, yLevel, height);
         block.position.set(x, yPosition, z);
         block.castShadow = true;
         block.receiveShadow = true;
@@ -1658,10 +1737,10 @@ class BlockBuilder {
         // Store block data and add reference to mesh userData for raycasting
         const blockData = { 
             mesh: block, 
-            height: this.blockSize, // Each block represents 3x3x3 meters
+            height: height,
             color: this.selectedColor, 
             position: { x: x, y: yPosition, z: z },
-            yLevel: yLevel, // Track which level this block is at
+            yLevel: yLevel,
             id: blockId
         };
         block.userData.blockData = blockData;
@@ -1714,7 +1793,7 @@ class BlockBuilder {
         const face = this.determineClickedFace(blockMesh, intersection);
         switch (face) {
             case 'top':
-            this.placeAboveBlock(blockData);
+                this.placeAboveBlock(blockData);
                 break;
             case 'bottom':
                 this.placeBelowBlock(blockData, { skipValidation: true });
@@ -1723,7 +1802,7 @@ class BlockBuilder {
             case 'west':
             case 'north':
             case 'south':
-            this.placeAdjacentBlock(blockData, clickPoint);
+                this.placeAdjacentBlock(blockData, clickPoint);
                 break;
             default:
                 this.placeAboveBlock(blockData);
@@ -1776,7 +1855,8 @@ class BlockBuilder {
         const material = new THREE.MeshLambertMaterial({ color: this.selectedColor });
         
         const block = new THREE.Mesh(geometry, material);
-        const yPosition = newLevel * this.blockSize + this.blockSize / 2;
+        // Calculate Y position based on actual cumulative height of blocks below
+        const yPosition = this._calculateYPosition(blockData.position.x, blockData.position.z, newLevel, this.blockSize);
         block.position.set(blockData.position.x, yPosition, blockData.position.z);
         block.castShadow = true;
         block.receiveShadow = true;
@@ -1852,33 +1932,64 @@ class BlockBuilder {
         const blockId = `${x}_${yLevel}_${z}`;
         
         // Create new 3x3x3 block (1 unit = 3 meters in real world)
-        const geometry = new THREE.BoxGeometry(this.blockSize, this.blockSize, this.blockSize);
+        // Special case: first block at ground level in empty column is thin
+        const isEmptyColumn = !Array.from(this.blocks.values()).some(bd => 
+            bd.position.x === x && bd.position.z === z
+        );
+        const height = (yLevel === 0 && isEmptyColumn) ? 0.22 : this.blockSize;
+        
+        const geometry = new THREE.BoxGeometry(this.blockSize, height, this.blockSize);
         const material = new THREE.MeshLambertMaterial({ color: this.selectedColor });
         
         const block = new THREE.Mesh(geometry, material);
-        const yPosition = yLevel * this.blockSize + this.blockSize / 2;
+        // Calculate Y position based on actual cumulative height of blocks below
+        const yPosition = this._calculateYPosition(x, z, yLevel, height);
         block.position.set(x, yPosition, z);
         block.castShadow = true;
         block.receiveShadow = true;
         
-        // Store block data
-        const blockData = {
-            mesh: block,
-            height: this.blockSize, // Each block represents 3x3x3 meters
-            color: this.selectedColor,
+        this.scene.add(block);
+        
+        // Store block data and add reference to mesh userData for raycasting
+        const blockData = { 
+            mesh: block, 
+            height: height,
+            color: this.selectedColor, 
             position: { x: x, y: yPosition, z: z },
             yLevel: yLevel,
             id: blockId
         };
         block.userData.blockData = blockData;
-        
-        this.scene.add(block);
         this.blocks.set(blockId, blockData);
         
         this.updateStats();
         this.needsRender = true;
         
         return true;
+    }
+
+    // Create a block with custom height (for thin ground base)
+    _createVariableHeightBlock(x, z, yLevel, height, color) {
+        const geometry = new THREE.BoxGeometry(this.blockSize, height, this.blockSize);
+        const material = new THREE.MeshLambertMaterial({ color });
+        const block = new THREE.Mesh(geometry, material);
+        const yPosition = this.landBaseY + yLevel * this.blockSize + height / 2;
+        block.position.set(x, yPosition, z);
+        block.castShadow = true;
+        block.receiveShadow = true;
+        this.scene.add(block);
+
+        const blockData = {
+            mesh: block,
+            height: height,
+            color: color,
+            position: { x, y: yPosition, z },
+            yLevel: yLevel,
+            id: blockId
+        };
+        block.userData.blockData = blockData;
+        this.blocks.set(blockId, blockData);
+        return blockData;
     }
 
         // Remove block by mesh reference
@@ -2045,42 +2156,77 @@ class BlockBuilder {
             }
             console.log('🖼️ Map texture size:', mapTexture.image.width, 'x', mapTexture.image.height);
 
-            // Create plane geometry that matches the grid size
-            const planeGeometry = new THREE.PlaneGeometry(
-                gridBounds.width,
-                gridBounds.height
-            );
+            // Build alpha mask texture clipped to the exact boundary
+            const alphaTex = this.createBoundaryAlphaMaskTexture(mapTexture.image.width, mapTexture.image.height);
+ 
+            // Build polygon-shaped geometry from boundary with UVs
+            const points2D = [];
+            const projected = [];
+            this.originalBoundary.forEach(pt => {
+                const p = this.projectLatLngToGrid(pt);
+                if (p) {
+                    points2D.push(new THREE.Vector2(p.x, p.z));
+                    projected.push(p);
+                }
+            });
+            if (points2D.length < 3) {
+                console.warn('Not enough points to build boundary overlay');
+                return;
+            }
+            // Shape and geometry (created in XY plane; we'll rotate to XZ)
+            const shape = new THREE.Shape(points2D);
+            const shapeGeometry = new THREE.ShapeGeometry(shape);
+            // Compute UVs using geographic mapping and the stored texture crop meta
+            const pos = shapeGeometry.attributes.position;
+            const uvs = new Float32Array((pos.count) * 2);
+            const meta = this._mapTexMeta;
+            if (!meta) {
+                console.warn('Missing map texture meta; UVs may be misaligned');
+            }
+            const capNorth = meta?.capNorth ?? this.originalBounds.getNorth();
+            const capSouth = meta?.capSouth ?? this.originalBounds.getSouth();
+            const capWest = meta?.capWest ?? this.originalBounds.getWest();
+            const capEast = meta?.capEast ?? this.originalBounds.getEast();
+            const srcX = meta?.srcX ?? 0;
+            const srcY = meta?.srcY ?? 0;
+            const srcW = meta?.srcW ?? (mapTexture.image?.width || 1);
+            const srcH = meta?.srcH ?? (mapTexture.image?.height || 1);
+            const canvasW = meta?.canvasW ?? (mapTexture.image?.width || 1);
+            const canvasH = meta?.canvasH ?? (mapTexture.image?.height || 1);
+            for (let i = 0; i < pos.count; i++) {
+                const x = pos.getX(i); // grid X
+                const z = pos.getY(i); // grid Z (before rotation)
+                const lng = capWest + x * this.lngSpacing;
+                const lat = capNorth - z * this.latSpacing;
+                const uNorm = (lng - capWest) / (capEast - capWest);
+                const vNorm = (capNorth - lat) / (capNorth - capSouth);
+                const uPix = uNorm * canvasW;
+                const vPix = vNorm * canvasH;
+                const u = (uPix - srcX) / srcW;
+                const v = (vPix - srcY) / srcH;
+                uvs[i * 2] = u;
+                uvs[i * 2 + 1] = v;
+            }
+            shapeGeometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
 
-            // Create material with better visibility for map reference
-            const planeMaterial = new THREE.MeshBasicMaterial({
+            // Material for the map overlay polygon
+            const polyMaterial = new THREE.MeshBasicMaterial({
                 map: mapTexture,
                 transparent: true,
-                opacity: 0.6,
+                opacity: 0.85,
                 side: THREE.DoubleSide,
                 depthWrite: false,
                 depthTest: true
             });
+            polyMaterial.polygonOffset = true;
+            polyMaterial.polygonOffsetFactor = 1;
+            polyMaterial.polygonOffsetUnits = 1;
 
-            // Push overlay slightly back to reduce z-fighting with grid squares
-            planeMaterial.polygonOffset = true;
-            planeMaterial.polygonOffsetFactor = 1;
-            planeMaterial.polygonOffsetUnits = 1;
-
-            // Create the map plane mesh
-            this.mapOverlayPlane = new THREE.Mesh(planeGeometry, planeMaterial);
-
-            // Position the plane exactly on the grid floor level, centered over the grid extents
-            this.mapOverlayPlane.position.set(
-                gridBounds.centerX,
-                -0.01,
-                gridBounds.centerZ
-            );
-
-            // Ensure it renders after the grid
-            this.mapOverlayPlane.renderOrder = 0; // Behind the grid squares
-
-            // Rotate to lie flat on the ground (same as grid)
-            this.mapOverlayPlane.rotation.x = -Math.PI / 2;
+            // Create mesh; reuse mapOverlayPlane reference for compatibility
+            this.mapOverlayPlane = new THREE.Mesh(shapeGeometry, polyMaterial);
+            this.mapOverlayPlane.position.set(0, this.landBaseY - 0.01, 0);
+            this.mapOverlayPlane.rotation.x = Math.PI / 2;
+            this.mapOverlayPlane.renderOrder = 0;
 
             // Add to scene
             this.scene.add(this.mapOverlayPlane);
@@ -2191,12 +2337,14 @@ class BlockBuilder {
                         const croppedCanvas = this.cropCapturedCanvasToPolygonBounds(
                             this.capturedMapCanvas,
                             this.capturedTextureBounds,
-                            this.originalBounds
+                            this.originalBounds,
+                            null
                         );
                         console.log('🧮 Cropped canvas size:', croppedCanvas.width, 'x', croppedCanvas.height);
                         
                         const texture = new THREE.CanvasTexture(croppedCanvas);
                     texture.needsUpdate = true;
+                    texture.flipY = false;
                     texture.wrapS = THREE.ClampToEdgeWrapping;
                     texture.wrapT = THREE.ClampToEdgeWrapping;
                     texture.minFilter = THREE.LinearFilter;
@@ -2214,8 +2362,10 @@ class BlockBuilder {
                 // Fallback: build texture from map tiles (CORS-safe)
                 console.warn('⚠️ No valid pre-captured canvas available, generating from tiles...');
                 this.createTileTextureCanvas(this.originalBounds).then((tileCanvas) => {
+                    // No polygon masking here; we will generate an alpha mask separately
                     const texture = new THREE.CanvasTexture(tileCanvas);
                         texture.needsUpdate = true;
+                        texture.flipY = false;
                         texture.wrapS = THREE.ClampToEdgeWrapping;
                         texture.wrapT = THREE.ClampToEdgeWrapping;
                         texture.minFilter = THREE.LinearFilter;
@@ -2377,7 +2527,7 @@ class BlockBuilder {
     /**
      * Crop the captured canvas to the polygon's bounding box, based on capture and polygon bounds
      */
-    cropCapturedCanvasToPolygonBounds(canvas, captureBounds, polygonLeafletBounds) {
+    cropCapturedCanvasToPolygonBounds(canvas, captureBounds, polygonLeafletBounds, boundaryPoints) {
         try {
             if (!canvas || !captureBounds || !polygonLeafletBounds) {
                 return canvas;
@@ -2411,11 +2561,29 @@ class BlockBuilder {
             out.width = srcW;
             out.height = srcH;
             const ctx = out.getContext('2d');
+            // Draw image portion first
             ctx.drawImage(canvas, srcX, srcY, srcW, srcH, 0, 0, srcW, srcH);
-            // Add a subtle border to confirm texture rendering
-            ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(1, 1, out.width - 2, out.height - 2);
+
+            // If we have the exact polygon, mask outside pixels
+            if (Array.isArray(boundaryPoints) && boundaryPoints.length >= 3) {
+                // Build polygon path in the cropped canvas coordinate frame
+                ctx.save();
+                ctx.beginPath();
+                for (let i = 0; i < boundaryPoints.length; i++) {
+                    const pt = boundaryPoints[i];
+                    const u = (pt.lng - capWest) / (capEast - capWest);
+                    const v = (capNorth - pt.lat) / (capNorth - capSouth);
+                    const x = u * canvas.width - srcX;
+                    const y = v * canvas.height - srcY;
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.closePath();
+                // Keep only inside the polygon
+                ctx.globalCompositeOperation = 'destination-in';
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+                ctx.restore();
+            }
             return out;
         } catch (e) {
             console.warn('Could not crop captured canvas, using full canvas', e);
@@ -2732,6 +2900,63 @@ class BlockBuilder {
             this.controls.update();
         }
         
+        // Animate water waves (grid-shaped via Chebyshev distance)
+        if (this.waterInstances && this.waterInstances.length > 0 && this.waterTiles.length > 0) {
+            const now = performance.now();
+            const t = (now - this._waveTimeStart) * 0.001;
+            const tempMatrix = new THREE.Matrix4();
+            const tempPosition = new THREE.Vector3();
+            const tempScale = new THREE.Vector3(1, 1, 1);
+            const { amplitude, baseHeight, speed, phaseStep, waterDepth } = this.waterParams;
+ 
+            let tileIndex = 0;
+            for (let i = 0; i < this.waterTiles.length; i++) {
+                const tile = this.waterTiles[i];
+                const d = tile.distToBoundary != null ? tile.distToBoundary : 0;
+                // Keep uniform wave propagation, add random height variation
+                const randomOffset = tile.randomOffset || 0;
+                const phase = d * phaseStep - t * speed; // Keep uniform wave front
+                
+                // Random amplitude variation per tile (0.7 to 1.3 of base amplitude)
+                const amplitudeVariation = 0.7 + 0.6 * randomOffset;
+                let h = baseHeight + amplitude * amplitudeVariation * (Math.sin(phase) * 0.5 + 0.5);
+                
+                // Add subtle secondary ripple with random timing
+                const secondaryPhase = phase * 1.7 + randomOffset * 6.28; // Full random phase offset
+                h += amplitude * 0.2 * amplitudeVariation * (Math.sin(secondaryPhase) * 0.5 + 0.5);
+                
+                // Ensure wave tops remain below the bottom of the skirt's first ring
+                const skirtBottomY = this.landBaseY - 0.22 - 0.5; // ring1 center (landBaseY-0.22) minus half height
+                const topLimitH = (skirtBottomY - 0.02) - (this.landBaseY - waterDepth);
+                h = Math.min(h, Math.max(0.05, topLimitH));
+ 
+                tempPosition.set(tile.x, this.landBaseY - waterDepth + h * 0.5, tile.z);
+                tempScale.set(1, Math.max(0.05, h), 1);
+ 
+                tempMatrix.identity();
+                tempMatrix.makeScale(tempScale.x, tempScale.y, tempScale.z);
+                tempMatrix.setPosition(tempPosition);
+ 
+                // Find which instance this tile belongs to and update it
+                let currentTileIndex = 0;
+                for (let instIdx = 0; instIdx < this.waterInstances.length; instIdx++) {
+                    const inst = this.waterInstances[instIdx];
+                    if (i >= currentTileIndex && i < currentTileIndex + inst.count) {
+                        const localIndex = i - currentTileIndex;
+                        inst.setMatrixAt(localIndex, tempMatrix);
+                        break;
+                    }
+                    currentTileIndex += inst.count;
+                }
+            }
+            
+            // Mark all instances for update
+            this.waterInstances.forEach(inst => {
+                inst.instanceMatrix.needsUpdate = true;
+            });
+            this.needsRender = true; // continuous rendering while water is present
+        }
+        
         // Only render when needed for performance
         if (this.needsRender) {
             if (this.renderer && this.scene && this.camera) {
@@ -2836,5 +3061,341 @@ class BlockBuilder {
             level++;
         }
         this.createBlockAt(x, z, level);
+    }
+
+    // Create a grid-aligned water field around the island
+    createWaterField(bounds, excludeSet = null, outerCells = 36) {
+        // Softer water material that blends with background
+        const material = new THREE.MeshPhongMaterial({
+            color: 0xa8c8e0,      // More blue but still subtle
+            transparent: true,
+            opacity: 0.75,        // Base opacity (will be modulated per tile)
+            shininess: 80,
+            specular: 0xc8d8f0,   // Blue-tinted highlights
+            emissive: 0x98b8d0,   // Blue-tinted glow
+            emissiveIntensity: 0.08
+        });
+
+         // Box columns that will be Y-scaled for waves
+         const geometry = new THREE.BoxGeometry(this.blockSize, 1, this.blockSize);
+
+        // Prepare base polygon in grid space
+        const basePoly = this._getBoundaryPolygonGrid(); // [{x,z}]
+        const landSet = new Set();
+        this.gridData.forEach(gp => landSet.add(`${gp.gridX}_${gp.gridY}`));
+
+        // Collect and organize tiles by distance rings for layered transparency
+        const tilesByRing = []; // Array of arrays: [ring0tiles, ring1tiles, ...]
+        const ringSize = Math.max(6, outerCells / 6); // ~6 rings
+        for (let r = 0; r < 6; r++) tilesByRing.push([]);
+        
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+            for (let z = bounds.minZ; z <= bounds.maxZ; z++) {
+                const key = `${x}_${z}`;
+                // Skip land tiles
+                if (landSet.has(key)) continue;
+                // Ensure tile is outside base polygon (water is outside island)
+                const insideIsland = this._pointInPolygonGrid(x + 0.0, z + 0.0, basePoly);
+                if (insideIsland) continue;
+                // Keep only tiles within margin distance from boundary for uniform band
+                const d = this._minDistanceToPolygon({ x: x + 0.0, z: z + 0.0 }, basePoly);
+                if (d > outerCells) continue;
+                if (excludeSet && excludeSet.has(key)) continue; // skip skirt
+                
+                // Assign to ring based on distance from boundary
+                const ringIndex = Math.min(5, Math.floor(d / ringSize));
+                tilesByRing[ringIndex].push({ x, z, distToBoundary: d });
+            }
+        }
+
+        // Create separate instanced mesh for each ring with different materials
+        this.waterInstances = []; // Array of instanced meshes
+        this.waterTiles = []; // Flattened for animation
+        
+        const tempMatrix = new THREE.Matrix4();
+        const tempPosition = new THREE.Vector3();
+        const tempScale = new THREE.Vector3(1, 1, 1);
+        const { baseHeight, waterDepth } = this.waterParams;
+        
+        for (let ringIdx = 0; ringIdx < tilesByRing.length; ringIdx++) {
+            const ringTiles = tilesByRing[ringIdx];
+            if (ringTiles.length === 0) continue;
+            
+            // Progressive color and transparency for each ring
+            const ringFactor = ringIdx / (tilesByRing.length - 1);
+            // Single bright turquoise color for all rings
+            const waterColor = new THREE.Color(0xb8e8f0); // Brighter turquoise
+            const bgColor = new THREE.Color(0xe8f4f8);   // Match new background
+            const blendedColor = waterColor.clone().lerp(bgColor, ringFactor * 0.2);
+            const opacity = 0.35 * (1.0 - Math.pow(ringFactor, 1.8)); // Even higher transparency
+            
+            const material = new THREE.MeshPhongMaterial({
+                color: blendedColor,
+                transparent: true,
+                opacity: opacity,
+                shininess: 80 * (1.0 - ringFactor * 0.3),
+                specular: new THREE.Color(0xd0f4ff).lerp(bgColor, ringFactor * 0.4),
+                emissive: new THREE.Color(0xa8e0f0).lerp(bgColor, ringFactor * 0.6),
+                emissiveIntensity: 0.08 * (1.0 - ringFactor * 0.5)
+            });
+            
+            const instanced = new THREE.InstancedMesh(geometry, material, ringTiles.length);
+            instanced.castShadow = false;
+            instanced.receiveShadow = true;
+            instanced.renderOrder = 1 + ringIdx * 0.001; // Layer rings
+            
+            for (let i = 0; i < ringTiles.length; i++) {
+                const t = ringTiles[i];
+                const h = baseHeight;
+                tempPosition.set(t.x, this.landBaseY - waterDepth + h * 0.5, t.z);
+                tempScale.set(1, Math.max(0.05, h), 1);
+                
+                tempMatrix.identity();
+                tempMatrix.makeScale(tempScale.x, tempScale.y, tempScale.z);
+                tempMatrix.setPosition(tempPosition);
+                instanced.setMatrixAt(i, tempMatrix);
+                
+                // Store random offset for this tile (consistent per tile)
+                if (!t.randomOffset) {
+                    t.randomOffset = (Math.sin(t.x * 12.9898 + t.z * 78.233) * 43758.5453) % 1.0;
+                }
+            }
+            instanced.instanceMatrix.needsUpdate = true;
+            
+            this.scene.add(instanced);
+            this.waterInstances.push(instanced);
+            this.waterTiles.push(...ringTiles); // Flatten for animation
+        }
+    }
+
+    // Create a boundary-shaped skirt via BFS rings from land tiles
+    createIslandSkirt({ rings = 3 }) {
+        const group = new THREE.Group();
+        const geom = new THREE.BoxGeometry(this.blockSize, this.blockSize, this.blockSize);
+        const ringMats = [
+            new THREE.MeshLambertMaterial({ color: 0xc8d0d4 }), // light rock
+            new THREE.MeshLambertMaterial({ color: 0x9aa3a7 }), // mid rock
+            new THREE.MeshLambertMaterial({ color: 0x6f777c })  // dark rock
+        ];
+
+        // Land set (inside boundary)
+        const land = new Set();
+        this.gridData.forEach(gp => land.add(`${gp.gridX}_${gp.gridY}`));
+
+        // BFS frontier init: neighbors of land that are not land
+        let frontier = new Set();
+        const addNeighbors = (x, z, into) => {
+            into.add(`${x+1}_${z}`);
+            into.add(`${x-1}_${z}`);
+            into.add(`${x}_${z+1}`);
+            into.add(`${x}_${z-1}`);
+        };
+        land.forEach(key => {
+            const [sx, sz] = key.split('_').map(Number);
+            const tmp = new Set();
+            addNeighbors(sx, sz, tmp);
+            tmp.forEach(k => { if (!land.has(k)) frontier.add(k); });
+        });
+
+        const visited = new Set(land);
+        this.skirtTiles.clear();
+
+        for (let r = 1; r <= rings; r++) {
+            const mat = ringMats[Math.min(r - 1, ringMats.length - 1)];
+            const current = Array.from(frontier).filter(k => !visited.has(k));
+            if (current.length === 0) break;
+
+            const heightY = this.landBaseY - r * 0.22; // step down outward
+            const inst = new THREE.InstancedMesh(geom, mat, current.length);
+            inst.castShadow = true;
+            inst.receiveShadow = true;
+
+            const m = new THREE.Matrix4();
+            const p = new THREE.Vector3();
+            for (let i = 0; i < current.length; i++) {
+                const [xStr, zStr] = current[i].split('_');
+                const x = Number(xStr), z = Number(zStr);
+                p.set(x, heightY, z);
+                m.identity();
+                m.setPosition(p);
+                inst.setMatrixAt(i, m);
+                this.skirtTiles.add(current[i]);
+            }
+            inst.instanceMatrix.needsUpdate = true;
+            group.add(inst);
+
+            // Prepare next frontier
+            const next = new Set();
+            current.forEach(k => {
+                const [xStr, zStr] = k.split('_');
+                const x = Number(xStr), z = Number(zStr);
+                addNeighbors(x, z, next);
+            });
+            next.forEach(k => { if (!visited.has(k)) frontier.add(k); });
+            current.forEach(k => visited.add(k));
+        }
+
+        group.renderOrder = 2;
+        this.terrainGroup = group;
+        this.scene.add(group);
+    }
+
+    // Large inverted dome with radial gradient from water color to off-white
+    createBackgroundDome() {
+        if (this.backgroundDome) {
+            this.scene.remove(this.backgroundDome);
+            this.backgroundDome.geometry?.dispose?.();
+            this.backgroundDome.material?.dispose?.();
+            this.backgroundDome = null;
+        }
+
+        const radius = 2000;
+        const geo = new THREE.SphereGeometry(radius, 32, 24);
+        const uniforms = {
+            uInnerColor: { value: new THREE.Color(0xa8d8e8) }, // Light turquoise center
+            uOuterColor: { value: new THREE.Color(0xe8f4f8) }, // Light turquoise background
+            uCenter: { value: new THREE.Vector3(this.islandCenter.x, this.landBaseY, this.islandCenter.z) }
+        };
+        const mat = new THREE.ShaderMaterial({
+            uniforms,
+            vertexShader: `
+                varying vec3 vWorldPos;
+                void main() {
+                    vec4 wp = modelMatrix * vec4(position, 1.0);
+                    vWorldPos = wp.xyz;
+                    gl_Position = projectionMatrix * viewMatrix * wp;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vWorldPos;
+                uniform vec3 uInnerColor;
+                uniform vec3 uOuterColor;
+                uniform vec3 uCenter;
+                void main() {
+                    vec2 p = vWorldPos.xz - uCenter.xz;
+                    float d = length(p) / 1200.0; // normalize distance
+                    d = clamp(d, 0.0, 1.0);
+                    vec3 col = mix(uInnerColor, uOuterColor, d);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            `,
+            side: THREE.BackSide,
+            depthWrite: false,
+            depthTest: false,
+            fog: false
+        });
+        const dome = new THREE.Mesh(geo, mat);
+        dome.position.copy(this.islandCenter);
+        this.scene.add(dome);
+        this.backgroundDome = dome;
+    }
+
+    createBoundaryAlphaMaskTexture(texWidth, texHeight) {
+        if (!this._mapTexMeta || !Array.isArray(this.originalBoundary)) return null;
+        const { capNorth, capSouth, capWest, capEast, srcX, srcY, srcW, srcH, canvasW, canvasH } = this._mapTexMeta;
+        const out = document.createElement('canvas');
+        out.width = srcW;
+        out.height = srcH;
+        const ctx = out.getContext('2d');
+        ctx.clearRect(0, 0, out.width, out.height);
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        for (let i = 0; i < this.originalBoundary.length; i++) {
+            const pt = this.originalBoundary[i];
+            const u = (pt.lng - capWest) / (capEast - capWest);
+            const v = (capNorth - pt.lat) / (capNorth - capSouth);
+            const x = u * canvasW - srcX;
+            const y = v * canvasH - srcY;
+            if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        const tex = new THREE.CanvasTexture(out);
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.needsUpdate = true;
+        return tex;
+    }
+
+    // Project Leaflet boundary to grid-space polygon [{x,z}]
+    _getBoundaryPolygonGrid() {
+        const out = [];
+        if (!Array.isArray(this.originalBoundary)) return out;
+        for (let i = 0; i < this.originalBoundary.length; i++) {
+            const p = this.projectLatLngToGrid(this.originalBoundary[i]);
+            if (p) out.push({ x: p.x, z: p.z });
+        }
+        return out;
+    }
+
+    // Ray-casting point-in-polygon for grid coordinates
+    _pointInPolygonGrid(px, pz, poly) {
+        if (!poly || poly.length < 3) return false;
+        let inside = false;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const xi = poly[i].x, zi = poly[i].z;
+            const xj = poly[j].x, zj = poly[j].z;
+            const intersect = ((zi > pz) !== (zj > pz)) && (px < (xj - xi) * (pz - zi) / (zj - zi + 1e-12) + xi);
+            if (intersect) inside = !inside;
+        }
+        return inside;
+    }
+
+    // Minimum distance from point to polygon edges (in grid cells)
+    _minDistanceToPolygon(p, poly) {
+        if (!poly || poly.length < 2) return Infinity;
+        let minD = Infinity;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            const a = poly[j];
+            const b = poly[i];
+            const d = this._distancePointToSegment(p, a, b);
+            if (d < minD) minD = d;
+        }
+        return minD;
+    }
+
+    // Distance from point p to line segment ab (all in grid space)
+    _distancePointToSegment(p, a, b) {
+        const vx = b.x - a.x;
+        const vz = b.z - a.z;
+        const wx = p.x - a.x;
+        const wz = p.z - a.z;
+        const c1 = vx * wx + vz * wz;
+        if (c1 <= 0) return Math.hypot(p.x - a.x, p.z - a.z);
+        const c2 = vx * vx + vz * vz;
+        if (c2 <= c1) return Math.hypot(p.x - b.x, p.z - b.z);
+        const t = c1 / c2;
+        const projX = a.x + t * vx;
+        const projZ = a.z + t * vz;
+        return Math.hypot(p.x - projX, p.z - projZ);
+    }
+
+    // Calculate Y position based on actual cumulative height of blocks below
+    _calculateYPosition(x, z, yLevel, blockHeight) {
+        let cumulativeHeight = this.landBaseY;
+        for (let level = 0; level < yLevel; level++) {
+            const belowId = `${x}_${level}_${z}`;
+            const belowBlock = this.blocks.get(belowId);
+            if (belowBlock) {
+                cumulativeHeight += belowBlock.height;
+            } else {
+                cumulativeHeight += this.blockSize; // fallback for missing blocks
+            }
+        }
+        return cumulativeHeight + blockHeight / 2;
+    }
+
+    // Add a full-height block at the next empty level in a column
+    _stackAtColumn(x, z) {
+        let highest = -1;
+        this.blocks.forEach((bd) => {
+            if (bd.position.x === x && bd.position.z === z) {
+                if (bd.yLevel > highest) highest = bd.yLevel;
+            }
+        });
+        const nextLevel = highest + 1;
+        this._createVariableHeightBlock(x, z, nextLevel, this.blockSize, this.selectedColor);
+        this.updateStats();
+        this.needsRender = true;
     }
 } 

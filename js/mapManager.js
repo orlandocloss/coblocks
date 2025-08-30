@@ -77,9 +77,12 @@ class MapManager {
         });
 
         // Button event listeners
-        document.getElementById('clearBoundary').addEventListener('click', () => {
-            this.clearBoundary();
-        });
+        const clearBtn = document.getElementById('clearBoundary');
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.clearBoundary();
+            });
+        }
     }
 
     startDrawing() {
@@ -279,7 +282,8 @@ class MapManager {
         this.map.getContainer().style.cursor = '';
         
         // Disable generate button
-        document.getElementById('generateGrid').disabled = true;
+        const genBtn = document.getElementById('generateGrid');
+        if (genBtn) genBtn.disabled = true;
         
         // Update display
         // Ready for boundary drawing
