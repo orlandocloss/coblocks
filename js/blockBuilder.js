@@ -1433,7 +1433,7 @@ class BlockBuilder {
             } else if (event.altKey) {
                 this.placeBelowAtGrid(gp);
             } else {
-                this.addOrStackBlock(gp);
+                this.placeAtLowestAvailableAtGrid(gp);
             }
         });
     }
@@ -1714,7 +1714,7 @@ class BlockBuilder {
         const face = this.determineClickedFace(blockMesh, intersection);
         switch (face) {
             case 'top':
-            this.stackVertically(blockData);
+            this.placeAboveBlock(blockData);
                 break;
             case 'bottom':
                 this.placeBelowBlock(blockData, { skipValidation: true });
@@ -1726,7 +1726,7 @@ class BlockBuilder {
             this.placeAdjacentBlock(blockData, clickPoint);
                 break;
             default:
-                this.stackVertically(blockData);
+                this.placeAboveBlock(blockData);
         }
     }
 
@@ -2814,5 +2814,27 @@ class BlockBuilder {
 
     isOccupiedAtLevel(x, yLevel, z) {
         return this.blocks.has(`${x}_${yLevel}_${z}`);
+    }
+
+    // Place a block directly above the clicked block (first free level above it)
+    placeAboveBlock(existingBlockData, options = {}) {
+        const x = existingBlockData.position.x;
+        const z = existingBlockData.position.z;
+        let target = existingBlockData.yLevel + 1;
+        while (this.blocks.has(`${x}_${target}_${z}`)) {
+            target++;
+        }
+        this.createBlockAt(x, z, target, options);
+    }
+
+    // Place at the lowest available level in the column (ground if empty)
+    placeAtLowestAvailableAtGrid(gridPoint) {
+        const x = gridPoint.gridX;
+        const z = gridPoint.gridY;
+        let level = 0;
+        while (this.blocks.has(`${x}_${level}_${z}`)) {
+            level++;
+        }
+        this.createBlockAt(x, z, level);
     }
 } 
