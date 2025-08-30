@@ -86,4 +86,3 @@ Project structure
 - `js/blockBuilder.js` — THREE.js scene, blocks, overlay, camera, input
 - `js/app.js` — stage management, loading bar, global events
 -------
-MIT (or your preferred license). 
