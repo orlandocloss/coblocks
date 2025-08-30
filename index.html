@@ -98,7 +98,15 @@
     <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
     <script src="js/mapManager.js"></script>
     <script src="js/gridGenerator.js"></script>
-    <script src="js/blockBuilder.js"></script>
+    <!-- New modular architecture -->
+    <script src="js/core/SceneManager.js"></script>
+    <script src="js/core/CameraController.js"></script>
+    <script src="js/systems/BlockSystem.js"></script>
+    <script src="js/systems/GridRenderer.js"></script>
+    <script src="js/systems/MapOverlay.js"></script>
+    <script src="js/systems/WaterSystem.js"></script>
+    <script src="js/interaction/InteractionHandler.js"></script>
+    <script src="js/app/blockBuilder.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html> 

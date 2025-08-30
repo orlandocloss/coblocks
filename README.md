@@ -1,88 +1,58 @@
 coblocks
 ========
 
-Interactive boundary-to-grid builder with map overlay and 3D blocks.
+Interactive boundary-to-grid 3D builder with a map overlay.
 
-- Draw a boundary on a Leaflet map
-- Generate a 3×3m grid within that outline
-- Build in 3D with blocks using THREE.js (stack, sides, underneath)
-- Toggle a map texture overlay aligned to the boundary
-- Smooth camera modes (rotate, pan, build) and cursor-centered zoom
-- Optimized for huge grids via InstancedMesh; loading has a safe timeout
-
-Quick start
-----------
-
-Prereqs: Node.js (for deps) or a simple static server.
-
-1) Install dependencies (optional; libs are CDN-loaded):
-
-```
-npm install
-```
-
-2) Start a static server from the project root (choose one):
-
-- Python
-```
-python3 -m http.server 8080
-```
-- Node (serve)
-```
-npx serve -l 8080
-```
-
-3) Open in a browser:
-```
-http://127.0.0.1:8080
-```
-
-How to use
-----------
-
-1) Map stage
-- Draw your boundary by clicking on the map
-- Click the generate button (UI handles transition)
-
-2) Loading stage
-- A single progress bar shows generation
-- Very large selections will auto-timeout (~15s) and ask to restart
-
-3) Builder stage
-- Camera mode buttons:
-  - Rotate: orbit around the grid (cursor: all-scroll; drag: move)
-  - Pan: drag to move horizontally (cursor: move)
-  - Build: place/remove blocks (cursor: crosshair)
-- Map toggle: show/hide overlay texture aligned to your boundary
-- Color picker: pops up in build mode for block colors
-- Zoom: wheel zoom centers on the cursor; zooming out recenters to the initial overview
-
-Controls (mouse)
-----------------
-- Left drag (Rotate mode): orbit view
-- Left drag (Pan mode): move view horizontally
-- Left click (Build mode): place on top/sides/below based on clicked face
-- Wheel: zoom to cursor; far zoom returns toward the starting view
-
-Performance
+Description
 -----------
-- Grid rendering uses THREE.InstancedMesh for high performance
-- Designed to handle very large grids; ultimately limited by browser/GPU memory
-- Loading uses cooperative chunking and a timeout, so the UI stays responsive
+Draw a polygon on a Leaflet map, generate a snapped grid inside the boundary, and build in 3D with blocks using THREE.js. The experience includes camera modes (rotate/pan/build), cursor-centered zoom, a textured map overlay aligned to your boundary, animated water with an island skirt, and fast grid rendering via InstancedMesh.
 
-Tech stack
-----------
-- Leaflet.js (map, boundary drawing)
-- THREE.js (3D scene, blocks, grid, textures)
-- html2canvas (map capture when needed)
-- Vanilla JS, no frameworks
+Pipeline (high-level)
+---------------------
+1) Map boundary
+- `js/mapManager.js` presents a Leaflet map and captures a polygon boundary and bounds.
 
-Project structure
------------------
-- `index.html` — stages, controls, scripts
-- `styles.css` — UI, loading bar, controls
-- `js/mapManager.js` — Leaflet map, boundary capture
-- `js/gridGenerator.js` — boundary → grid generation (cooperative, chunked)
-- `js/blockBuilder.js` — THREE.js scene, blocks, overlay, camera, input
-- `js/app.js` — stage management, loading bar, global events
--------
+2) Grid generation
+- `js/gridGenerator.js` converts the boundary to grid cells and world coordinates in cooperative chunks.
+
+3) Scene orchestration
+- `js/app/blockBuilder.js` coordinates initialization in order:
+  - `js/core/SceneManager.js` sets up THREE scene, camera, renderer, lighting, render loop.
+  - `js/core/CameraController.js` configures camera modes and cursor-centered zoom.
+  - `js/systems/GridRenderer.js` builds the InstancedMesh grid.
+  - `js/systems/MapOverlay.js` creates the textured map overlay aligned to the boundary.
+  - `js/systems/WaterSystem.js` generates the island skirt, water rings, and background dome; drives wave animation.
+  - `js/systems/BlockSystem.js` manages block placement, stacking, physics validation, and stats.
+  - `js/interaction/InteractionHandler.js` handles raycasting, hover indicators, block-face highlighting, and clicks.
+
+4) Runtime
+- Render loop lives in `SceneManager`; it defers to `blockBuilder.updateAnimations()` for water motion and requests renders on demand for performance.
+
+Scripts by directory
+--------------------
+Core (`js/core/`)
+- `SceneManager.js`: THREE scene, camera, renderer, lighting, resize, render loop, `requestRender()`.
+- `CameraController.js`: camera modes (rotate/pan/build), cursor-centered wheel zoom, keyboard helpers, bounds.
+
+Systems (`js/systems/`)
+- `GridRenderer.js`: Instanced grid geometry/materials; fog and bounds helpers.
+- `MapOverlay.js`: map texture capture/alignment, overlay mesh material/depth config.
+- `WaterSystem.js`: water ring generation, skirt, dome, and wave animation parameters.
+- `BlockSystem.js`: create/remove/stack blocks, support checks, height logic (thin surface cap handling), Y-positioning.
+
+Interaction (`js/interaction/`)
+- `InteractionHandler.js`: mouse/touch input, raycasting, grid hover (filled quad + edges), block-face outline.
+
+App (`js/app/`)
+- `blockBuilder.js`: central coordinator wiring core, systems, and interaction in the correct order.
+
+App shell
+- `index.html`: UI, script ordering.
+- `styles.css`: layout and controls.
+- `js/app.js`: stage flow (map → loading → builder), loading/progress UI, global events.
+- `js/mapManager.js`: Leaflet boundary capture.
+- `js/gridGenerator.js`: boundary to grid conversion.
+
+Run locally (optional)
+----------------------
+- Serve the root directory and open `http://127.0.0.1:8080` in a browser (e.g., `python3 -m http.server 8080`).

@@ -80,8 +80,8 @@ class MapManager {
         const clearBtn = document.getElementById('clearBoundary');
         if (clearBtn) {
             clearBtn.addEventListener('click', () => {
-                this.clearBoundary();
-            });
+            this.clearBoundary();
+        });
         }
     }
 
