@@ -17,6 +17,8 @@ class BlockBuilder {
         this.blockSystem = new BlockSystem(this.sceneManager);
         this.gridRenderer = new GridRenderer(this.sceneManager);
         this.waterSystem = new WaterSystem(this.sceneManager);
+        this.cloudSystem = new CloudSystem(this.sceneManager);
+        this.characterSystem = new CharacterSystem(this.sceneManager, this.gridRenderer, this.blockSystem);
         this.interactionHandler = new InteractionHandler(this.sceneManager, this.cameraController, this.blockSystem);
         
         // === System State ===
@@ -99,6 +101,9 @@ class BlockBuilder {
         this.waterSystem.createIslandSkirt({ rings: 3 });
         this.waterSystem.createWaterFieldWithSkirt(gridData);
         this.waterSystem.createBackgroundDome();
+        this.waterSystem.createFarOceanPlane();
+        this.cloudSystem.setupClouds({ count: 10, boundaryPoly: this.waterSystem.getCloudBoundaryPolygon() });
+        this.characterSystem.createCharacter();
         
         // Set up interactions after everything is created
         this.interactionHandler.setupInteractions();
@@ -211,6 +216,9 @@ class BlockBuilder {
      */
     updateAnimations() {
         this.waterSystem.animateWater();
+        // Approximate delta time using a fixed step for simplicity
+        this.cloudSystem.animateClouds(0.016);
+        this.characterSystem.update(0.016);
     }
 
     // === Compatibility Properties ===

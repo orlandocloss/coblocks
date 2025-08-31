@@ -15,6 +15,8 @@ class WaterSystem {
         this.waterInstances = []; // Array of instanced water meshes
         this.waterTiles = []; // Flattened array for animation
         this.staticWaterPlane = null;
+        this.farOceanPlane = null;
+        this.farOceanInnerRadius = 0;
         
         // === Water Parameters ===
         this.waterParams = {
@@ -184,12 +186,12 @@ class WaterSystem {
     createWaterField(bounds, excludeSet = null, outerCells = 36) {
         // Single material for all water (original working approach)
         const material = new THREE.MeshPhongMaterial({
-            color: 0xa8c8e0,      // More blue but still subtle
+            color: 0xbfe0f5,      // Lighter blue
             transparent: true,
             opacity: 0.75,        // Base opacity (will be modulated per tile)
             shininess: 80,
-            specular: 0xc8d8f0,   // Blue-tinted highlights
-            emissive: 0x98b8d0,   // Blue-tinted glow
+            specular: 0xd8eafe,   // Lighter highlights
+            emissive: 0xb0d6ee,   // Lighter glow
             emissiveIntensity: 0.08
         });
 
@@ -243,17 +245,17 @@ class WaterSystem {
             
             // Per-ring material to create layered transparency and subtle color shift
             const ringFactor = tilesByRing.length > 1 ? (ringIdx / (tilesByRing.length - 1)) : 0;
-            const waterColor = new THREE.Color(0x6db8d8);
-            const bgColor = new THREE.Color(0xe8f0f8);
+            const waterColor = new THREE.Color(0x6dcaf0);
+            const bgColor = new THREE.Color(0xf5fbff);
             const blendedColor = waterColor.clone().lerp(bgColor, ringFactor * 0.2);
             const opacity = 0.75 * (1.0 - Math.pow(ringFactor, 1.8));
             const ringMaterial = new THREE.MeshPhongMaterial({
                 color: blendedColor,
                 transparent: true,
                 opacity: Math.max(0.08, Math.min(0.75, opacity)),
-                shininess: 80 * (1.0 - ringFactor * 0.3),
-                specular: new THREE.Color(0xa8d8f0).lerp(bgColor, ringFactor * 0.4),
-                emissive: new THREE.Color(0x78c0d8).lerp(bgColor, ringFactor * 0.6),
+                shininess: 75 * (1.0 - ringFactor * 0.3),
+                specular: new THREE.Color(0xaed6f2).lerp(bgColor, ringFactor * 0.4),
+                emissive: new THREE.Color(0x8fccef).lerp(bgColor, ringFactor * 0.5),
                 emissiveIntensity: 0.08 * (1.0 - ringFactor * 0.5),
                 depthWrite: false,
                 depthTest: true
@@ -272,7 +274,6 @@ class WaterSystem {
                 tempMatrix.identity();
                 tempMatrix.makeScale(tempScale.x, tempScale.y, tempScale.z);
                 tempMatrix.setPosition(tempPosition);
-                instanced.setMatrixAt(i, tempMatrix);
                 
                 // Store random offset for this tile (consistent per tile)
                 if (!t.randomOffset) {
@@ -286,10 +287,95 @@ class WaterSystem {
             this.waterTiles.push(...ringTiles); // Flatten for animation
         }
 
-
+        // Compute inner radius for far ocean plane (start just beyond last water tile)
+        let maxRadius = 0;
+        for (let i = 0; i < this.waterTiles.length; i++) {
+            const t = this.waterTiles[i];
+            const dx = t.x - this.islandCenter.x;
+            const dz = t.z - this.islandCenter.z;
+            const r = Math.hypot(dx, dz);
+            if (r > maxRadius) maxRadius = r;
+        }
+        // Add a small gap so nothing overlaps
+        this.farOceanInnerRadius = maxRadius + this.blockSize * 1.5;
     }
 
+    /**
+     * Create a large, still far-ocean ring that begins where animated water ends
+     */
+    createFarOceanPlane() {
+        // Remove previous
+        if (this.farOceanPlane) {
+            this.sceneManager.remove(this.farOceanPlane);
+            this.farOceanPlane.geometry?.dispose?.();
+            this.farOceanPlane.material?.dispose?.();
+            this.farOceanPlane = null;
+        }
 
+        // Use the color of the highest-transparency water ring (outermost ring color)
+        const waterColor = new THREE.Color(0x99d6ee);
+        const bgColor = new THREE.Color(0xf5fbff);
+        const innerBlendColor = waterColor.clone().lerp(bgColor, 0.5);
+        const horizonColor = new THREE.Color(0xbfe0f5); // match dome's uOuterColor
+
+        // Single large plane as far ocean background (no hole/cut)
+        const extent = 8000; // very large to cover horizon
+        const geo = new THREE.PlaneGeometry(extent, extent, 1, 1);
+        geo.rotateX(-Math.PI / 2); // Lay flat on XZ
+
+        // Gradient shader to blend toward the sky's deep blue at horizon
+        const innerRadius = Math.max(0, this.farOceanInnerRadius);
+        const outerRadius = 1200.0; // matches dome gradient scale (length/1200)
+        const uniforms = {
+            uCenter: { value: new THREE.Vector3(this.islandCenter.x, this.landBaseY, this.islandCenter.z) },
+            uInnerRadius: { value: innerRadius },
+            uOuterRadius: { value: outerRadius },
+            uInnerColor: { value: innerBlendColor },
+            uOuterColor: { value: horizonColor }
+        };
+        const mat = new THREE.ShaderMaterial({
+            uniforms,
+            vertexShader: `
+                varying vec3 vWorldPos;
+                void main() {
+                    vec4 wp = modelMatrix * vec4(position, 1.0);
+                    vWorldPos = wp.xyz;
+                    gl_Position = projectionMatrix * viewMatrix * wp;
+                }
+            `,
+            fragmentShader: `
+                varying vec3 vWorldPos;
+                uniform vec3 uInnerColor;
+                uniform vec3 uOuterColor;
+                uniform vec3 uCenter;
+                uniform float uInnerRadius;
+                uniform float uOuterRadius;
+                void main() {
+                    vec2 p = vWorldPos.xz - uCenter.xz;
+                    float d = length(p);
+                    float t = clamp((d - uInnerRadius) / max(1.0, (uOuterRadius - uInnerRadius)), 0.0, 1.0);
+                    vec3 col = mix(uInnerColor, uOuterColor, t);
+                    gl_FragColor = vec4(col, 1.0);
+                }
+            `,
+            transparent: false,
+            depthTest: false,
+            depthWrite: false,
+            fog: false,
+            side: THREE.DoubleSide
+        });
+
+        const mesh = new THREE.Mesh(geo, mat);
+        // Slightly below animated water to avoid z-fighting
+        mesh.position.set(this.islandCenter.x, this.landBaseY - this.waterParams.waterDepth - 0.02, this.islandCenter.z);
+        mesh.receiveShadow = false;
+        // Render before overlay (0) and water (>1), after dome (-100)
+        mesh.renderOrder = -50;
+
+        this.sceneManager.add(mesh);
+        this.farOceanPlane = mesh;
+        this.sceneManager.requestRender();
+    }
 
     /**
      * Create background gradient dome
@@ -305,8 +391,8 @@ class WaterSystem {
         const radius = 2000;
         const geo = new THREE.SphereGeometry(radius, 32, 24);
         const uniforms = {
-            uInnerColor: { value: new THREE.Color(0x88d0e0) },
-            uOuterColor: { value: new THREE.Color(0xe8f0f8) },
+            uInnerColor: { value: new THREE.Color(0xf7fbff) },
+            uOuterColor: { value: new THREE.Color(0xbfe0f5) },
             uCenter: { value: new THREE.Vector3(this.islandCenter.x, this.landBaseY, this.islandCenter.z) }
         };
         
@@ -341,6 +427,7 @@ class WaterSystem {
         
         const dome = new THREE.Mesh(geo, mat);
         dome.position.copy(this.islandCenter);
+        dome.renderOrder = -100; // Ensure it renders before everything else
         this.sceneManager.add(dome);
         this.backgroundDome = dome;
     }
@@ -487,6 +574,74 @@ class WaterSystem {
         return Math.hypot(p.x - projX, p.z - projZ);
     }
 
+    // --- Helpers for far ocean polygon offset ---
+    _polygonArea(poly) {
+        let a = 0;
+        for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+            a += (poly[j].x * poly[i].z - poly[i].x * poly[j].z);
+        }
+        return 0.5 * a;
+    }
+
+    _isClockwise(poly) {
+        return this._polygonArea(poly) < 0;
+    }
+
+    _computeOffsetPolygon(poly, d) {
+        if (!poly || poly.length < 3) return null;
+
+        // Determine winding; for CCW, outward normal is to the right of the edge
+        const isCW = this._isClockwise(poly);
+        const s = isCW ? -1 : 1; // flip for CW to keep outward direction
+
+        const n = poly.length;
+        const out = [];
+        for (let i = 0; i < n; i++) {
+            const p0 = poly[(i + n - 1) % n];
+            const p1 = poly[i];
+            const p2 = poly[(i + 1) % n];
+
+            // Edge unit normals (outward)
+            const e1x = p1.x - p0.x, e1z = p1.z - p0.z;
+            const e2x = p2.x - p1.x, e2z = p2.z - p1.z;
+            const e1len = Math.hypot(e1x, e1z) || 1;
+            const e2len = Math.hypot(e2x, e2z) || 1;
+            const n1x = s * (e1z / e1len), n1z = s * (-e1x / e1len);
+            const n2x = s * (e2z / e2len), n2z = s * (-e2x / e2len);
+
+            // Angle bisector of the normals
+            let bx = n1x + n2x;
+            let bz = n1z + n2z;
+            let bl = Math.hypot(bx, bz);
+            if (bl < 1e-6) {
+                // Nearly straight or reflex; fall back to single normal
+                bx = n1x;
+                bz = n1z;
+                bl = Math.hypot(bx, bz) || 1;
+            }
+            bx /= bl; bz /= bl;
+
+            // Compute scale to keep approximate distance d from both edges
+            // Use 1 / cos(theta/2) approximation via dot of normals
+            const dot = (n1x * bx + n1z * bz);
+            const scale = Math.max(1.0, 1.0 / Math.max(0.2, dot));
+
+            out.push({ x: p1.x + bx * d * scale, z: p1.z + bz * d * scale });
+        }
+        return out;
+    }
+
+    /**
+     * Public: Return an outward offset polygon for cloud bounds (island + water extent)
+     */
+    getCloudBoundaryPolygon() {
+        const basePoly = this._getBoundaryPolygonGrid();
+        if (!basePoly || basePoly.length < 3) return null;
+        const d = Math.max(8, (this.waterOuterCells || 72) - 2);
+        const offset = this._computeOffsetPolygon(basePoly, d);
+        return offset && offset.length >= 3 ? offset : basePoly;
+    }
+
     /**
      * Clean up water system resources
      */
@@ -508,6 +663,14 @@ class WaterSystem {
             this.staticWaterPlane.geometry?.dispose?.();
             this.staticWaterPlane.material?.dispose?.();
             this.staticWaterPlane = null;
+        }
+        
+        // Remove far ocean plane
+        if (this.farOceanPlane) {
+            this.sceneManager.remove(this.farOceanPlane);
+            this.farOceanPlane.geometry?.dispose?.();
+            this.farOceanPlane.material?.dispose?.();
+            this.farOceanPlane = null;
         }
         
         // Remove terrain group
