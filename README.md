@@ -52,7 +52,3 @@ App shell
 - `js/app.js`: stage flow (map → loading → builder), loading/progress UI, global events.
 - `js/mapManager.js`: Leaflet boundary capture.
 - `js/gridGenerator.js`: boundary to grid conversion.
-
-Run locally (optional)
-----------------------
-- Serve the root directory and open `http://127.0.0.1:8080` in a browser (e.g., `python3 -m http.server 8080`).
